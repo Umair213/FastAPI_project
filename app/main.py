@@ -3,6 +3,10 @@ from fastapi.params import Body
 from pydantic import BaseModel
 from typing import Optional
 from random import randrange
+import uvicorn
+import time
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 app = FastAPI()
 
@@ -12,6 +16,20 @@ class Post(BaseModel):
     # id: int
     # published: Optional[bool] = True
     # rating: Optional[int] = None
+
+# Implementing loop to not create the server if connetion is not successful.
+while True:
+    try:
+        conn = psycopg2.connect(host='localhost', database='fastapi', user='postgres', password='umairzafar2406', cursor_factory=RealDictCursor)
+        cursor = conn.cursor()
+        print("Database connection was Successful!")
+        break
+    except Exception as error:
+        print("Connecting to DB failed")
+        print("Error: ", error)
+        time.sleep(2)
+    
+
 
 class UpdatePost(BaseModel):
     title: str
@@ -88,3 +106,6 @@ def change_existing_post(id: int, update_post: UpdatePost):
 def latest_post():
     return my_posts[len(my_posts)-1]
 
+# for debugging
+if __name__ == "__main__":
+    uvicorn.run(app, host='0.0.0.0', port=8081)
