@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Response, status, HTTPException
+from fastapi import FastAPI, Response, status, HTTPException, Depends
 from fastapi.params import Body
 from pydantic import BaseModel
 from typing import Optional
@@ -7,6 +7,13 @@ import uvicorn
 import time
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from app import models
+from app.database import engine, get_db
+from sqlalchemy.orm import Session
+from app.database import get_db
+
+#  This line is going to create our models
+models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
@@ -32,54 +39,51 @@ async def root():
     return {"message": "Welcome to my API folks"}
 
 @app.get("/posts")
-def get_posts():
-    cursor.execute("SELECT * FROM posts")
-    posts = cursor.fetchall()
-    return {"posts": posts}
+def get_posts(db: Session = Depends(get_db)):
+    # Query to get all content of Post model (table)
+    posts = db.query(models.Post).all()     
+    return {"Posts": posts}
 
 @app.get("/posts/{id}", status_code=status.HTTP_200_OK)
-def get_individual_post(id: int):
-    cursor.execute("SELECT * FROM posts WHERE id = %s", (str(id)))
-    post = cursor.fetchone()
+def get_individual_post(id: int, db: Session = Depends(get_db)):
+    post = db.query(models.Post).filter(models.Post.id == id).first()
     if not post:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail=f"Post with id: {id} not found.")
     return {"data": post}
 
 @app.post("/posts", status_code=status.HTTP_201_CREATED)
-def create_posts(post: Post):
-    # We are not using f-string below as is not safe and can have SQL injection vulenerability.
-    cursor.execute("""INSERT INTO posts (title, content)
-                    VALUES (%s, %s) RETURNING *""", (post.title, post.content))
-    new_post = cursor.fetchone()
-    conn.commit()
+def create_posts(post: Post, db: Session = Depends(get_db)):
+    new_post = models.Post(**post.dict())  #unpacking values
+    db.add(new_post)
+    db.commit()
+    db.refresh(new_post)
 
     return {"data": new_post}
 
 @app.delete("/posts/{id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_individual_post(id: int):
-    cursor.execute("DELETE FROM posts WHERE id = %s RETURNING *", (str(id)))
-    deleted_post = cursor.fetchone()
-    if deleted_post == None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail=f"post with id '{id}' does not exist")
-
-    conn.commit()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-@app.put("/posts/{id}", status_code=status.HTTP_202_ACCEPTED)
-def change_existing_post(id: int, post: Post):
-    cursor.execute("""UPDATE posts SET title =%s, content = %s, published = %s
-                   WHERE id = %s RETURNING * """, 
-                   (post.title, post.content, post.published, str(id)))
-    updated_post = cursor.fetchone()
-    
-    if updated_post == None:
+def delete_individual_post(id: int, db: Session = Depends(get_db)):
+    post = db.query(models.Post).filter(models.Post.id == id)
+    if post.first() == None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail=f"post with id '{id}' does not exist")
     else:
-        conn.commit()
-        return {'message': updated_post}
+        post.delete(synchronize_session=False)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+@app.put("/posts/{id}", status_code=status.HTTP_202_ACCEPTED)
+def change_existing_post(id: int, post: Post, db: Session = Depends(get_db)):
+    post_query = db.query(models.Post).filter(models.Post.id == id)
+    post_to_delete = post_query.first()
+    if post_to_delete == None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail=f"post with id '{id}' does not exist")
+    else:
+        post_query.update(post.dict(), synchronize_session=False)
+        db.commit()
+
+        return {'message': post_query.first()}
 
 
 # for debugging
