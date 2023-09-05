@@ -1,26 +1,17 @@
 from fastapi import FastAPI, Response, status, HTTPException, Depends
-from fastapi.params import Body
-from pydantic import BaseModel
-from typing import Optional
-from random import randrange
 import uvicorn
 import time
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from app import models
+from app import models, schemas
 from app.database import engine, get_db
 from sqlalchemy.orm import Session
-from app.database import get_db
+from typing import List
 
 #  This line is going to create our models
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
-
-class Post(BaseModel):
-    title: str
-    content: str
-    published: Optional[bool] = True
 
 # Implementing loop to not create the server if connetion is not successful.
 while True:
@@ -38,28 +29,28 @@ while True:
 async def root():
     return {"message": "Welcome to my API folks"}
 
-@app.get("/posts")
+@app.get("/posts", response_model=schemas.PostResponse)
 def get_posts(db: Session = Depends(get_db)):
     # Query to get all content of Post model (table)
     posts = db.query(models.Post).all()     
-    return {"Posts": posts}
+    return posts
 
-@app.get("/posts/{id}", status_code=status.HTTP_200_OK)
+@app.get("/posts/{id}", status_code=status.HTTP_200_OK, response_model=schemas.PostResponse)
 def get_individual_post(id: int, db: Session = Depends(get_db)):
     post = db.query(models.Post).filter(models.Post.id == id).first()
     if not post:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail=f"Post with id: {id} not found.")
-    return {"data": post}
+    return post
 
-@app.post("/posts", status_code=status.HTTP_201_CREATED)
-def create_posts(post: Post, db: Session = Depends(get_db)):
+@app.post("/posts", status_code=status.HTTP_201_CREATED, response_model=List[schemas.PostResponse])
+def create_posts(post: schemas.PostCreate, db: Session = Depends(get_db)):
     new_post = models.Post(**post.dict())  #unpacking values
     db.add(new_post)
     db.commit()
     db.refresh(new_post)
 
-    return {"data": new_post}
+    return new_post
 
 @app.delete("/posts/{id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_individual_post(id: int, db: Session = Depends(get_db)):
@@ -69,21 +60,22 @@ def delete_individual_post(id: int, db: Session = Depends(get_db)):
                             detail=f"post with id '{id}' does not exist")
     else:
         post.delete(synchronize_session=False)
-    db.commit()
+        db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-@app.put("/posts/{id}", status_code=status.HTTP_202_ACCEPTED)
-def change_existing_post(id: int, post: Post, db: Session = Depends(get_db)):
-    post_query = db.query(models.Post).filter(models.Post.id == id)
-    post_to_delete = post_query.first()
-    if post_to_delete == None:
+@app.put("/posts/{id}", status_code=status.HTTP_202_ACCEPTED, response_model=schemas.PostResponse)
+def change_existing_post(id: int, post: schemas.PostUpdate, db: Session = Depends(get_db)):
+    post_query = db.query(models.Post).filter(models.Post.id == id)     #simple SQL query
+    post_to_update = post_query.first()     #Post to update
+    # checking if the post to update doesn't exist raise a 404 error
+    if post_to_update == None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail=f"post with id '{id}' does not exist")
     else:
-        post_query.update(post.dict(), synchronize_session=False)
+        post_query.update(post.dict(), synchronize_session=False)       #Just to update
         db.commit()
 
-        return {'message': post_query.first()}
+        return post_query.first()
 
 
 # for debugging
